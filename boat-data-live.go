@@ -156,7 +156,7 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 	defer conn.Close()
 
 	for boatKey, _ := range _keys {
-		fmt.Fprintf(conn, "bd," + boatKey + "\n")
+		fmt.Fprintf(conn, "bd_nc," + boatKey + "\n")
 		line, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
 			log.Println(err)
