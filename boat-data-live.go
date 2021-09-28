@@ -71,7 +71,7 @@ type KeyConnTuple struct {
 	Conn *websocket.Conn
 }
 
-func boatDataLiveMain() {
+func boatDataLiveMain(connectPort int) {
 	connsRemove := list.New()
 	keysRemove := list.New()
 
@@ -81,7 +81,7 @@ func boatDataLiveMain() {
 
 		_lock.Lock()
 
-		resps := getBoatDataLiveResps()
+		resps := getBoatDataLiveResps(connectPort)
 
 		for boatKey, conns := range _keys {
 			resp, exists := resps[boatKey]
@@ -145,10 +145,10 @@ func boatDataLiveMain() {
 	}
 }
 
-func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
+func getBoatDataLiveResps(connectPort int) map[string]BoatDataLiveRespMsg {
 	resps := make(map[string]BoatDataLiveRespMsg)
 
-	conn, err := net.Dial("tcp", "127.0.0.1:8192")
+	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(connectPort))
 	if err != nil {
 		log.Println(err)
 		return resps
