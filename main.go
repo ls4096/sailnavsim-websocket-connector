@@ -95,7 +95,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch req.Cmd {
-		case "bdl":
+		case "bdl": // "Boat data live" request
 			wsReqBoatDataLive(&req, conn)
 		default:
 			log.Println("Invalid command: " + req.Cmd)

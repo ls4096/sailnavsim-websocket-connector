@@ -33,12 +33,17 @@ import (
 
 var _lock sync.Mutex
 
+// Map of connections to boat keys (one connection can be associated with only one boat key)
 var _conns = make(map[*websocket.Conn]string)
+
+// Map of boat keys to lists of connections (one boat key can be associated with multiple connections)
 var _keys = make(map[string]*list.List)
 
 var _iter int64 = 0
 var _countConns int64 = 0
 var _countMsgs int64 = 0
+
+var _connectPort int = 0
 
 var _boatKeyRegexp *regexp.Regexp = regexp.MustCompile("^[0-9a-f]{32}$")
 
@@ -55,14 +60,17 @@ func wsReqBoatDataLive(req *ReqMsg, conn *websocket.Conn) {
 
 	_, exists := _conns[conn]
 	if !exists {
+		// This is the first request on this connection, so associate it with the boat key.
 		_conns[conn] = req.BoatKey
 		_countConns++;
 	} else {
 		// Don't allow more than one boat key per connection.
+		// If we encounter this situation, then just close the connection.
 		conn.Close()
 		return
 	}
 
+	// Add the connection to the list of connections that this boat key maps to.
 	keyList, exists := _keys[req.BoatKey]
 	if exists {
 		keyList.PushBack(conn)
@@ -88,22 +96,29 @@ type KeyConnTuple struct {
 }
 
 func boatDataLiveMain(connectPort int) {
+	_connectPort = connectPort
+
 	connsRemove := list.New()
 	keysRemove := list.New()
 
+	// Main loop for live boat data.
+	// Iterates approximately once every second (or slower, if things run longer).
 	for {
 		connsRemove.Init()
 		keysRemove.Init()
 
 		_lock.Lock()
 
-		resps := getBoatDataLiveResps(connectPort)
+		// Get the boat data responses from the simulator.
+		resps := getBoatDataLiveResps()
 
 		for boatKey, conns := range _keys {
 			resp, exists := resps[boatKey]
 			if !exists {
+				// There was no valid response from the simulator for this boat key.
 				log.Println("No response for boat key: " + boatKey)
 
+				// Close this connection.
 				for e := conns.Front(); e != nil; e = e.Next() {
 					conn := e.Value.(*websocket.Conn)
 					connsRemove.PushBack(conn)
@@ -115,10 +130,13 @@ func boatDataLiveMain(connectPort int) {
 				continue
 			}
 
+			// For each connection in the list associated with this boat key,
+			// send the boat data response message over the WebSocket.
 			for e := conns.Front(); e != nil; e = e.Next() {
 				conn := e.Value.(*websocket.Conn)
 				err := conn.WriteJSON(resp)
 				if err != nil {
+					// Error sending message, so close this connection.
 					log.Println(err)
 					connsRemove.PushBack(conn)
 					keysRemove.PushBack(KeyConnTuple { boatKey, conn })
@@ -129,27 +147,31 @@ func boatDataLiveMain(connectPort int) {
 			}
 		}
 
+		// Remove closed connections from our tracking map.
 		for e := connsRemove.Front(); e != nil; e = e.Next() {
 			delete(_conns, e.Value.(*websocket.Conn))
 		}
 
+		// Remove closed connections from the list associated with our tracked boat keys map.
 		for e := keysRemove.Front(); e != nil; e = e.Next() {
 			kct := e.Value.(KeyConnTuple)
-			l, exists := _keys[kct.Key]
+			connList, exists := _keys[kct.Key]
 			if exists {
-				for e2 := l.Front(); e2 != nil; e2 = e2.Next() {
+				for e2 := connList.Front(); e2 != nil; e2 = e2.Next() {
 					if e2.Value.(*websocket.Conn) == kct.Conn {
-						l.Remove(e2)
-						break
+						connList.Remove(e2)
+						break // The connection will only be in the list once, so we're done.
 					}
 				}
-			}
 
-			if l.Len() == 0 {
-				delete(_keys, kct.Key)
+				// If the boat has no more connections associated with it, then remove it from the map.
+				if connList.Len() == 0 {
+					delete(_keys, kct.Key)
+				}
 			}
 		}
 
+		// Log some statistics every 60 iterations.
 		if _iter % 60 == 0 {
 			log.Println("Now:        conns=" + strconv.Itoa(len(_conns)) + ", keys=" + strconv.Itoa(len(_keys)))
 			log.Println("Cumulative: conns=" + strconv.FormatInt(_countConns, 10) + ", msgs=" + strconv.FormatInt(_countMsgs, 10))
@@ -161,16 +183,17 @@ func boatDataLiveMain(connectPort int) {
 	}
 }
 
-func getBoatDataLiveResps(connectPort int) map[string]BoatDataLiveRespMsg {
+func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 	resps := make(map[string]BoatDataLiveRespMsg)
 
-	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(connectPort))
+	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort))
 	if err != nil {
 		log.Println(err)
 		return resps
 	}
 	defer conn.Close()
 
+	// For each boat key currently tracked, get the boat data from the simulator.
 	for boatKey, _ := range _keys {
 		fmt.Fprintf(conn, "bd_nc," + boatKey + "\n")
 		line, err := bufio.NewReader(conn).ReadString('\n')
