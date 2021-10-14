@@ -39,13 +39,14 @@ var _conns = make(map[*websocket.Conn]string)
 // Map of boat keys to lists of connections (one boat key can be associated with multiple connections)
 var _keys = make(map[string]*list.List)
 
-var _iter int64 = 0
 var _countConns int64 = 0
 var _countMsgs int64 = 0
 
 var _connectPort int = 0
 
 var _boatKeyRegexp *regexp.Regexp = regexp.MustCompile("^[0-9a-f]{32}$")
+
+const ITERATIONS_PER_LOG int64 = 60
 
 
 func wsReqBoatDataLive(req *ReqMsg, conn *websocket.Conn) {
@@ -98,8 +99,15 @@ type KeyConnTuple struct {
 func boatDataLiveMain(connectPort int) {
 	_connectPort = connectPort
 
+	var iterCount int64 = 0
+	var iterTimeMin int64 = 999999999999
+	var iterTimeMax int64 = -999999999999
+	var iterTimeSum int64 = 0
+
 	connsRemove := list.New()
 	keysRemove := list.New()
+
+	log.Println("Starting boat data live main loop...")
 
 	// Main loop for live boat data.
 	// Iterates approximately once every second (or slower, if things run longer).
@@ -108,6 +116,7 @@ func boatDataLiveMain(connectPort int) {
 		keysRemove.Init()
 
 		_lock.Lock()
+		iterStartTime := time.Now()
 
 		// Get the boat data responses from the simulator.
 		resps := getBoatDataLiveResps()
@@ -171,13 +180,33 @@ func boatDataLiveMain(connectPort int) {
 			}
 		}
 
-		// Log some statistics every 60 iterations.
-		if _iter % 60 == 0 {
+		// Measure and record iteration duration.
+		iterTimeUs := time.Now().Sub(iterStartTime).Microseconds()
+		if iterTimeUs < iterTimeMin {
+			iterTimeMin = iterTimeUs
+		}
+		if iterTimeUs > iterTimeMax {
+			iterTimeMax = iterTimeUs
+		}
+		iterTimeSum += iterTimeUs
+
+		// Log some statistics periodically.
+		if (iterCount > 0) && (iterCount % ITERATIONS_PER_LOG == 0) {
 			log.Println("Now:        conns=" + strconv.Itoa(len(_conns)) + ", keys=" + strconv.Itoa(len(_keys)))
 			log.Println("Cumulative: conns=" + strconv.FormatInt(_countConns, 10) + ", msgs=" + strconv.FormatInt(_countMsgs, 10))
-		}
-		_iter++
 
+			log.Println("Iteration times (min/avg/max us): " +
+				strconv.FormatInt(iterTimeMin, 10) + "/" +
+				strconv.FormatInt(iterTimeSum / ITERATIONS_PER_LOG, 10) + "/" +
+				strconv.FormatInt(iterTimeMax, 10))
+
+			// Reset iteration time counters.
+			iterTimeMin = 999999999999
+			iterTimeMax = -999999999999
+			iterTimeSum = 0
+		}
+
+		iterCount++
 		_lock.Unlock()
 		time.Sleep(1 * time.Second)
 	}
