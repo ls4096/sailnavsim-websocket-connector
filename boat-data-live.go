@@ -215,6 +215,10 @@ func boatDataLiveMain(connectPort int) {
 func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 	resps := make(map[string]BoatDataLiveRespMsg)
 
+	if len(_keys) == 0 {
+		return resps
+	}
+
 	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort))
 	if err != nil {
 		log.Println(err)
