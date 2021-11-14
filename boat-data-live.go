@@ -21,6 +21,7 @@ import (
 	"container/list"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"regexp"
 	"strconv"
@@ -33,11 +34,28 @@ import (
 
 var _lock sync.Mutex
 
-// Map of connections to boat keys (one connection can be associated with only one boat key)
-var _conns = make(map[*websocket.Conn]string)
+type BoatInfo struct {
+	BoatKey string
+	FriendlyName string
+}
 
-// Map of boat keys to lists of connections (one boat key can be associated with multiple connections)
+// Map of connections to boat keys (one connection can be associated with only one boat key)
+type ConnCtx struct {
+	BoatKey string
+	GroupBoats *list.List
+}
+var _conns = make(map[*websocket.Conn]ConnCtx)
+
+// Map of boat keys to list of connections (one boat key can be associated with multiple connections)
+// TODO: This might be redundant now that we also have _trackedBoats (see below), so we may be able to refactor and remove this.
 var _keys = make(map[string]*list.List)
+
+// Tracker for boat keys in groups
+type TrackedBoatEntry struct {
+	BoatKey string
+	RefCount uint64
+}
+var _trackedBoats = make(map[string]*TrackedBoatEntry)
 
 var _countConns int64 = 0
 var _countMsgs int64 = 0
@@ -49,7 +67,7 @@ var _boatKeyRegexp *regexp.Regexp = regexp.MustCompile("^[0-9a-f]{32}$")
 const ITERATIONS_PER_LOG int64 = 60
 
 
-func wsReqBoatDataLive(req *ReqMsg, conn *websocket.Conn) {
+func wsReqBoatDataLive(req *ReqMsg, conn *websocket.Conn, withGroup bool) {
 	if !_boatKeyRegexp.MatchString(req.BoatKey) {
 		log.Println("Client sent invalid boat key!")
 		conn.Close()
@@ -62,8 +80,32 @@ func wsReqBoatDataLive(req *ReqMsg, conn *websocket.Conn) {
 	_, exists := _conns[conn]
 	if !exists {
 		// This is the first request on this connection, so associate it with the boat key.
-		_conns[conn] = req.BoatKey
-		_countConns++;
+
+		if withGroup {
+			// Request to include nearby boats in group
+			groupBoats := getBoatsInGroup(req.BoatKey)
+			if groupBoats == nil {
+				conn.Close()
+				return
+			}
+
+			_conns[conn] = ConnCtx {
+				BoatKey: req.BoatKey,
+				GroupBoats: groupBoats,
+			}
+
+			trackBoats(groupBoats)
+		} else {
+			// Request to include only this boat
+			_conns[conn] = ConnCtx {
+				BoatKey: req.BoatKey,
+				GroupBoats: nil,
+			}
+
+			trackBoat(req.BoatKey)
+		}
+
+		_countConns++
 	} else {
 		// Don't allow more than one boat key per connection.
 		// If we encounter this situation, then just close the connection.
@@ -89,6 +131,11 @@ type BoatDataLiveRespMsg struct {
 	Stw float64 `json:"stw"`
 	Cog float64 `json:"cog"`
 	Sog float64 `json:"sog"`
+}
+
+type BoatGroupRespMsg struct {
+	ThisBoat BoatDataLiveRespMsg `json:"you"`
+	OtherBoats map[string][3]float64 `json:"others"`
 }
 
 type KeyConnTuple struct {
@@ -143,21 +190,45 @@ func boatDataLiveMain(connectPort int) {
 			// send the boat data response message over the WebSocket.
 			for e := conns.Front(); e != nil; e = e.Next() {
 				conn := e.Value.(*websocket.Conn)
-				err := conn.WriteJSON(resp)
-				if err != nil {
+				connCtx := _conns[conn]
+				closeConn := false
+				if connCtx.GroupBoats != nil {
+					// Create the response message for this boat plus the other boats in the same group.
+					resp := createBoatGroupRespMsg(&connCtx, resps)
+					err := conn.WriteJSON(resp)
+					if err != nil {
+						log.Println(err)
+						closeConn = true
+					}
+				} else {
+					err := conn.WriteJSON(resp)
+					if err != nil {
+						log.Println(err)
+						closeConn = true
+					}
+				}
+
+				if closeConn {
 					// Error sending message, so close this connection.
-					log.Println(err)
 					connsRemove.PushBack(conn)
 					keysRemove.PushBack(KeyConnTuple { boatKey, conn })
 
 					conn.Close()
 				}
-				_countMsgs++;
+
+				_countMsgs++
 			}
 		}
 
 		// Remove closed connections from our tracking map.
 		for e := connsRemove.Front(); e != nil; e = e.Next() {
+			connCtx := _conns[e.Value.(*websocket.Conn)]
+			if connCtx.GroupBoats != nil {
+				untrackBoats(connCtx.GroupBoats)
+			} else {
+				untrackBoat(connCtx.BoatKey)
+			}
+
 			delete(_conns, e.Value.(*websocket.Conn))
 		}
 
@@ -192,7 +263,7 @@ func boatDataLiveMain(connectPort int) {
 
 		// Log some statistics periodically.
 		if (iterCount > 0) && (iterCount % ITERATIONS_PER_LOG == 0) {
-			log.Println("Now:        conns=" + strconv.Itoa(len(_conns)) + ", keys=" + strconv.Itoa(len(_keys)))
+			log.Println("Now:        conns=" + strconv.Itoa(len(_conns)) + ", keys=" + strconv.Itoa(len(_keys)) + ", tracked=" + strconv.Itoa(len(_trackedBoats)))
 			log.Println("Cumulative: conns=" + strconv.FormatInt(_countConns, 10) + ", msgs=" + strconv.FormatInt(_countMsgs, 10))
 
 			log.Println("Iteration times (min/avg/max us): " +
@@ -227,7 +298,7 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 	defer conn.Close()
 
 	// For each boat key currently tracked, get the boat data from the simulator.
-	for boatKey, _ := range _keys {
+	for boatKey, _ := range _trackedBoats {
 		fmt.Fprintf(conn, "bd_nc," + boatKey + "\n")
 		line, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
@@ -292,4 +363,167 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 	}
 
 	return resps
+}
+
+func getBoatsInGroup(boatKey string) *list.List {
+	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort))
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+	defer conn.Close()
+
+	groupKeys := list.New()
+
+	fmt.Fprintf(conn, "boatgroupmembers," + boatKey + "\n")
+	start := true
+	reader := bufio.NewReader(conn)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
+
+		line = strings.Trim(line, "\n")
+
+		if start {
+			if line == "error" {
+				log.Println("Error returned from simulator when trying to get boat group membership for boat key: " + boatKey)
+				return nil
+			}
+
+			s := strings.Split(line, ",")
+			switch s[2] {
+			case "ok":
+				start = false
+				continue
+
+			default:
+				log.Println("Unexpected code (\"" + s[2] + "\") returned from simulator when trying to get boat group membership for boat key: " + boatKey)
+				return nil
+			}
+		} else if line == "" {
+			return groupKeys
+		} else {
+			s := strings.Split(line, ",")
+			if s[1] != "!" {
+				groupKeys.PushBack(&BoatInfo {
+					BoatKey: s[0],
+					FriendlyName: s[1],
+				})
+			}
+		}
+	}
+}
+
+func trackBoats(boats *list.List) {
+	for boat := boats.Front(); boat != nil; boat = boat.Next() {
+		trackBoat(boat.Value.(*BoatInfo).BoatKey)
+	}
+}
+
+func untrackBoats(boats *list.List) {
+	for boat := boats.Front(); boat != nil; boat = boat.Next() {
+		untrackBoat(boat.Value.(*BoatInfo).BoatKey)
+	}
+}
+
+func trackBoat(boatKey string) {
+	entry, exists := _trackedBoats[boatKey]
+	if !exists {
+		_trackedBoats[boatKey] = &TrackedBoatEntry {
+			BoatKey: boatKey,
+			RefCount: 1,
+		}
+	} else {
+		entry.RefCount++
+	}
+}
+
+func untrackBoat(boatKey string) {
+	entry, exists := _trackedBoats[boatKey]
+	if exists {
+		entry.RefCount--
+		if entry.RefCount == 0 {
+			delete(_trackedBoats, boatKey)
+		}
+	}
+}
+
+func createBoatGroupRespMsg(connCtx *ConnCtx, resps map[string]BoatDataLiveRespMsg) *BoatGroupRespMsg {
+	others := make(map[string][3]float64)
+
+	thisBoatData := resps[connCtx.BoatKey]
+
+	// Iterate through all the other boats in the same group to see which should be included in the response message.
+	for e := connCtx.GroupBoats.Front(); e != nil; e = e.Next() {
+		otherBoatKey := e.Value.(*BoatInfo).BoatKey
+		friendlyName := e.Value.(*BoatInfo).FriendlyName
+
+		otherBoatData := resps[otherBoatKey]
+
+		if connCtx.BoatKey == otherBoatKey {
+			continue // Our boat, so don't include it here.
+		}
+
+		dist := roughCloseDistance(thisBoatData, otherBoatData)
+
+		if dist > 15.0 {
+			continue // Other boat too far away (more than 15 NM) to see live, so don't include it.
+		}
+
+		others[friendlyName] = [3]float64 { otherBoatData.Lat, otherBoatData.Lon, roundCourse(otherBoatData.Ctw, dist) }
+	}
+
+	return &BoatGroupRespMsg {
+		ThisBoat: resps[connCtx.BoatKey],
+		OtherBoats: others,
+	}
+}
+
+func roughCloseDistance(local BoatDataLiveRespMsg, other BoatDataLiveRespMsg) float64 {
+	lat := local.Lat
+	if lat > 89.0 {
+		lat = 89.0
+	} else if lat < -89.0 {
+		lat = -89.0
+	}
+
+	yDiff := 60.0 * math.Abs(local.Lat - other.Lat)
+	if yDiff > 60.0 {
+		return 60.0
+	}
+
+	nmPerLonDeg := 60.0 * math.Cos(lat * math.Pi / 180.0)
+
+	xDiff := nmPerLonDeg * diffLon(local.Lon, other.Lon)
+	if xDiff > 60.0 {
+		return 60.0
+	}
+
+	return math.Sqrt(xDiff * xDiff + yDiff * yDiff)
+}
+
+func diffLon(a float64, b float64) float64 {
+	diff := math.Abs(a - b)
+	if diff > 180.0 {
+		if a < b {
+			diff = math.Abs(a + 360.0 - b)
+		} else {
+			diff = math.Abs(b + 360.0 - a)
+		}
+	}
+
+	return diff
+}
+
+func roundCourse(course float64, distance float64) float64 {
+	if distance >= 6.0 {
+		return math.Round(course / 22.5) * 22.5 // To nearest 22.5 deg (16 points)
+	} else if distance >= 3.0 {
+		return math.Round(course / 11.25) * 11.25 // To nearest 11.25 deg (32 points)
+	} else {
+		return math.Round(course / 5.625) * 5.625 // To nearest 5.625 deg (64 points)
+	}
 }

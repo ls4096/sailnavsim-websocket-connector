@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	log.Println("SailNavSim WebSocket Connector v1.0.1")
+	log.Println("SailNavSim WebSocket Connector v1.1.0")
 
 	listenPort, connectPort, err := parseArgs(os.Args[1:])
 	if err != nil {
@@ -74,7 +74,7 @@ type ReqMsg struct {
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	var upgrader = websocket.Upgrader {
 		ReadBufferSize: 1024,
-		WriteBufferSize: 1024,
+		WriteBufferSize: 4096,
 		CheckOrigin: func (r *http.Request) bool { return true },
 	}
 
@@ -96,7 +96,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch req.Cmd {
 		case "bdl": // "Boat data live" request
-			wsReqBoatDataLive(&req, conn)
+			wsReqBoatDataLive(&req, conn, false)
+		case "bdl_g": // "Boat data live" request including nearby group members
+			wsReqBoatDataLive(&req, conn, true)
 		default:
 			log.Println("Invalid command: " + req.Cmd)
 		}
