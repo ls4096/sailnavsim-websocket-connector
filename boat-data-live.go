@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2021 ls4096 <ls4096@8bitbyte.ca>
+ * Copyright (C) 2021-2022 ls4096 <ls4096@8bitbyte.ca>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Affero General Public License as published by
@@ -467,7 +467,7 @@ func createBoatGroupRespMsg(connCtx *ConnCtx, resps map[string]BoatDataLiveRespM
 			continue // Our boat, so don't include it here.
 		}
 
-		dist := roughCloseDistance(thisBoatData, otherBoatData)
+		dist := roughCloseDistance(thisBoatData.Lat, thisBoatData.Lon, otherBoatData.Lat, otherBoatData.Lon)
 
 		if dist > 15.0 {
 			continue // Other boat too far away (more than 15 NM) to see live, so don't include it.
@@ -482,22 +482,22 @@ func createBoatGroupRespMsg(connCtx *ConnCtx, resps map[string]BoatDataLiveRespM
 	}
 }
 
-func roughCloseDistance(local BoatDataLiveRespMsg, other BoatDataLiveRespMsg) float64 {
-	lat := local.Lat
-	if lat > 89.0 {
-		lat = 89.0
-	} else if lat < -89.0 {
-		lat = -89.0
+func roughCloseDistance(localLat float64, localLon float64, otherLat float64, otherLon float64) float64 {
+	latMid := (localLat + otherLat) / 2.0
+	if latMid > 89.0 {
+		latMid = 89.0
+	} else if latMid < -89.0 {
+		latMid = -89.0
 	}
 
-	yDiff := 60.0 * math.Abs(local.Lat - other.Lat)
+	yDiff := 60.0 * math.Abs(localLat - otherLat)
 	if yDiff > 60.0 {
 		return 60.0
 	}
 
-	nmPerLonDeg := 60.0 * math.Cos(lat * math.Pi / 180.0)
+	nmPerLonDeg := 60.0 * math.Cos(latMid * math.Pi / 180.0)
 
-	xDiff := nmPerLonDeg * diffLon(local.Lon, other.Lon)
+	xDiff := nmPerLonDeg * diffLon(localLon, otherLon)
 	if xDiff > 60.0 {
 		return 60.0
 	}

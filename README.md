@@ -17,6 +17,10 @@ This program exposes a WebSocket interface to provide some data, such as live bo
 
 `go build`
 
+### Run tests
+
+`go test`
+
 ## How to run
 
 `./sailnavsim-snsw <listen_port> <connect_port>`
