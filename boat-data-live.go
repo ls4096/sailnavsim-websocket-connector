@@ -20,7 +20,6 @@ import (
 	"bufio"
 	"container/list"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"net"
@@ -288,12 +287,6 @@ func boatDataLiveMain(connectPort int) {
 	}
 }
 
-func boatDataRequestWriter(writer io.Writer) {
-	for boatKey, _ := range _trackedBoats {
-		fmt.Fprintf(writer, "bd_nc," + boatKey + "\n")
-	}
-}
-
 func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 	resps := make(map[string]BoatDataLiveRespMsg)
 
@@ -313,7 +306,14 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 		return resps
 	}
 
-	go boatDataRequestWriter(conn)
+	requestWriterDone := make(chan int)
+	go func() {
+		for boatKey, _ := range _trackedBoats {
+			fmt.Fprintf(conn, "bd_nc," + boatKey + "\n")
+		}
+
+		requestWriterDone <- 0
+	}()
 
 	responseReader := bufio.NewReader(conn)
 
@@ -383,6 +383,9 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 			log.Println("Unexpected response from simulator: " + s[2])
 		}
 	}
+
+	// Ensure that our request writer goroutine has finished before continuing.
+	<-requestWriterDone
 
 	return resps
 }
