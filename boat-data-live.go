@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2021-2022 ls4096 <ls4096@8bitbyte.ca>
+ * Copyright (C) 2021-2023 ls4096 <ls4096@8bitbyte.ca>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Affero General Public License as published by
@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"container/list"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -47,7 +48,6 @@ type ConnCtx struct {
 var _conns = make(map[*websocket.Conn]ConnCtx)
 
 // Map of boat keys to list of connections (one boat key can be associated with multiple connections)
-// TODO: This might be redundant now that we also have _trackedBoats (see below), so we may be able to refactor and remove this.
 var _keys = make(map[string]*list.List)
 
 // Tracker for boat keys in groups
@@ -65,6 +65,9 @@ var _connectPort int = 0
 var _boatKeyRegexp *regexp.Regexp = regexp.MustCompile("^[0-9a-f]{32}$")
 
 const ITERATIONS_PER_LOG int64 = 60
+
+const DIAL_TIMEOUT = 3 * time.Second
+const CONN_RW_TIMEOUT = 3 * time.Second
 
 
 func wsReqBoatDataLive(req *ReqMsg, conn *websocket.Conn, withGroup bool) {
@@ -153,6 +156,7 @@ func boatDataLiveMain(connectPort int) {
 
 	connsRemove := list.New()
 	keysRemove := list.New()
+
 
 	log.Println("Starting boat data live main loop...")
 
@@ -252,7 +256,8 @@ func boatDataLiveMain(connectPort int) {
 		}
 
 		// Measure and record iteration duration.
-		iterTimeUs := time.Now().Sub(iterStartTime).Microseconds()
+		iterTimeDuration := time.Now().Sub(iterStartTime)
+		iterTimeUs := iterTimeDuration.Microseconds()
 		if iterTimeUs < iterTimeMin {
 			iterTimeMin = iterTimeUs
 		}
@@ -279,7 +284,13 @@ func boatDataLiveMain(connectPort int) {
 
 		iterCount++
 		_lock.Unlock()
-		time.Sleep(1 * time.Second)
+		time.Sleep(time.Second - iterTimeDuration)
+	}
+}
+
+func boatDataRequestWriter(writer io.Writer) {
+	for boatKey, _ := range _trackedBoats {
+		fmt.Fprintf(writer, "bd_nc," + boatKey + "\n")
 	}
 }
 
@@ -290,29 +301,40 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 		return resps
 	}
 
-	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort))
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort), DIAL_TIMEOUT)
 	if err != nil {
 		log.Println(err)
 		return resps
 	}
 	defer conn.Close()
 
+	if conn.SetDeadline(time.Now().Add(CONN_RW_TIMEOUT)) != nil {
+		log.Println(err)
+		return resps
+	}
+
+	go boatDataRequestWriter(conn)
+
+	responseReader := bufio.NewReader(conn)
+
 	// For each boat key currently tracked, get the boat data from the simulator.
-	for boatKey, _ := range _trackedBoats {
-		fmt.Fprintf(conn, "bd_nc," + boatKey + "\n")
-		line, err := bufio.NewReader(conn).ReadString('\n')
+	numTracked := len(_trackedBoats)
+	for i := 0; i < numTracked; i++ {
+		line, err := responseReader.ReadString('\n')
+
 		if err != nil {
 			log.Println(err)
-			return resps
+			break
 		}
 
 		line = strings.Trim(line, "\n")
 		if line == "error" {
-			log.Println("Error returned from simulator when trying to get live data for boat key: " + boatKey)
-			return resps
+			log.Println("Error returned from simulator when trying to get live data for boat num: " + strconv.Itoa(i))
+			break
 		}
 
 		s := strings.Split(line, ",")
+
 		switch s[2] {
 		case "ok":
 			lat, err := strconv.ParseFloat(s[3], 64)
@@ -355,7 +377,7 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 			}
 
 		case "noboat":
-			log.Println("No boat for key: " + boatKey)
+			log.Println("No boat for key: " + s[1])
 
 		default:
 			log.Println("Unexpected response from simulator: " + s[2])
@@ -366,12 +388,17 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 }
 
 func getBoatsInGroup(boatKey string) *list.List {
-	conn, err := net.Dial("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort))
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort), DIAL_TIMEOUT)
 	if err != nil {
 		log.Println(err)
 		return nil
 	}
 	defer conn.Close()
+
+	if conn.SetDeadline(time.Now().Add(CONN_RW_TIMEOUT)) != nil {
+		log.Println(err)
+		return nil
+	}
 
 	groupKeys := list.New()
 
