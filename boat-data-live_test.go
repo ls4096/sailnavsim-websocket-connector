@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2022 ls4096 <ls4096@8bitbyte.ca>
+ * Copyright (C) 2022-2023 ls4096 <ls4096@8bitbyte.ca>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Affero General Public License as published by
@@ -144,7 +144,7 @@ func roughCloseDistanceChecks(
 	dist := roughCloseDistance(lat0, lon0, lat1, lon1)
 	distRev := roughCloseDistance(lat1, lon1, lat0, lon0)
 
-	t.Logf("Distances from (%f,%f) to (%f,%f) are %f and %f!", lat0, lon0, lat1, lon1, dist, distRev)
+	t.Logf("Distances from (%f,%f) to (%f,%f) are %f and %f.", lat0, lon0, lat1, lon1, dist, distRev)
 
 	if expectedDist >= DIST_MAX_VALID {
 		if dist < DIST_MAX_VALID || distRev < DIST_MAX_VALID {
@@ -163,4 +163,44 @@ func roughCloseDistanceChecks(
 
 func expectApproxDist(dist float64, expect float64, margin float64) bool {
 	return math.Abs(dist - expect) <= margin
+}
+
+
+func TestCoordRounding(t *testing.T) {
+	var coord float64 = 123.4567373
+	distances := []float64 {
+		100.0, // To nearest ~50m (.0005)
+		50.0, // To nearest ~50m (.0005)
+		6.0, // To nearest ~50m (.0005)
+		4.0, // To nearest ~20m (.0002)
+		1.5, // To nearest ~10m (.0001)
+		0.8, // To nearest ~5m (.00005)
+		0.4, // To nearest ~2m (.00002)
+		0.15, // To nearest ~1m (.00001)
+		0.08, // To nearest ~0.5m (.000005)
+		0.04, // To nearest ~0.2m (.000002)
+		0.015, // To nearest ~0.1m (.000001)
+		0.0015, // To nearest ~0.1m (.000001)
+	}
+	expected := []float64 {
+		123.4565,
+		123.4565,
+		123.4565,
+		123.4568,
+		123.4567,
+		123.45675,
+		123.45674,
+		123.45674,
+		123.456735,
+		123.456738,
+		123.456737,
+		123.456737,
+	}
+
+	for i, dist := range distances {
+		rounded := roundCoord(coord, dist)
+		if rounded != expected[i] {
+			t.Errorf("Rounded coord %.10f at distance %f was %.10f, not expected %.10f", coord, dist, rounded, expected[i])
+		}
+	}
 }

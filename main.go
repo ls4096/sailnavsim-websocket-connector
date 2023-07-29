@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	log.Println("SailNavSim WebSocket Connector v1.1.3")
+	log.Println("SailNavSim WebSocket Connector v1.1.4")
 
 	listenPort, connectPort, err := parseArgs(os.Args[1:])
 	if err != nil {

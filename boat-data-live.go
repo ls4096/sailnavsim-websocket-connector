@@ -503,7 +503,13 @@ func createBoatGroupRespMsg(connCtx *ConnCtx, resps map[string]BoatDataLiveRespM
 			continue // Other boat too far away (more than 15 NM) to see live, so don't include it.
 		}
 
-		others[friendlyName] = [3]float64 { otherBoatData.Lat, otherBoatData.Lon, roundCourse(otherBoatData.Ctw, dist) }
+		// "Round" the other boat's lat/lon coordinates and course, depending on distance to the other boat,
+		// in order to reasonably disguise the other boat's set course through water.
+		others[friendlyName] = [3]float64 {
+			roundCoord(otherBoatData.Lat, dist),
+			roundCoord(otherBoatData.Lon, dist),
+			roundCourse(otherBoatData.Ctw, dist),
+		}
 	}
 
 	return &BoatGroupRespMsg {
@@ -546,6 +552,28 @@ func diffLon(a float64, b float64) float64 {
 	}
 
 	return diff
+}
+
+func roundCoord(coord float64, distance float64) float64 {
+	if distance >= 5.0 {
+		return math.Round(coord * 2000.0) / 2000.0 // To nearest ~50m (at equator)
+	} else if distance >= 2.0 {
+		return math.Round(coord * 5000.0) / 5000.0 // To nearest ~20m (at equator)
+	} else if distance >= 1.0 {
+		return math.Round(coord * 10000.0) / 10000.0 // To nearest ~10m (at equator)
+	} else if distance >= 0.5 {
+		return math.Round(coord * 20000.0) / 20000.0 // To nearest ~5m (at equator)
+	} else if distance >= 0.2 {
+		return math.Round(coord * 50000.0) / 50000.0 // To nearest ~2m (at equator)
+	} else if distance >= 0.1 {
+		return math.Round(coord * 100000.0) / 100000.0 // To nearest ~1m (at equator)
+	} else if distance >= 0.05 {
+		return math.Round(coord * 200000.0) / 200000.0 // To nearest ~0.5m (at equator)
+	} else if distance >= 0.02 {
+		return math.Round(coord * 500000.0) / 500000.0 // To nearest ~0.2m (at equator)
+	} else {
+		return math.Round(coord * 1000000.0) / 1000000.0 // To nearest ~0.1m (at equator)
+	}
 }
 
 func roundCourse(course float64, distance float64) float64 {
