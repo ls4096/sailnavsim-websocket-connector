@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2021-2023 ls4096 <ls4096@8bitbyte.ca>
+ * Copyright (C) 2021-2024 ls4096 <ls4096@8bitbyte.ca>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Affero General Public License as published by
@@ -133,6 +133,8 @@ type BoatDataLiveRespMsg struct {
 	Stw float64 `json:"stw"`
 	Cog float64 `json:"cog"`
 	Sog float64 `json:"sog"`
+	Lws float64 `json:"lws"`
+	Ha float64 `json:"ha"`
 }
 
 type BoatGroupRespMsg struct {
@@ -367,6 +369,16 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 				continue
 			}
 
+			lws, err := strconv.ParseFloat(s[9], 64)
+			if err != nil {
+				continue
+			}
+
+			ha, err := strconv.ParseFloat(s[10], 64)
+			if err != nil {
+				continue
+			}
+
 			resps[s[1]] = BoatDataLiveRespMsg {
 				Lat: lat,
 				Lon: lon,
@@ -374,6 +386,8 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 				Stw: stw,
 				Cog: cog,
 				Sog: sog,
+				Lws: lws,
+				Ha: ha,
 			}
 
 		case "noboat":

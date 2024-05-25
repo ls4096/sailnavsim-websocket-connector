@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2021-2023 ls4096 <ls4096@8bitbyte.ca>
+ * Copyright (C) 2021-2024 ls4096 <ls4096@8bitbyte.ca>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Affero General Public License as published by
@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	log.Println("SailNavSim WebSocket Connector v1.1.4")
+	log.Println("SailNavSim WebSocket Connector v1.2.0")
 
 	listenPort, connectPort, err := parseArgs(os.Args[1:])
 	if err != nil {
