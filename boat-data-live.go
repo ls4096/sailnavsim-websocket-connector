@@ -176,8 +176,8 @@ func boatDataLiveMain(connectPort int) {
 		for boatKey, conns := range _keys {
 			resp, exists := resps[boatKey]
 			if !exists {
-				// There was no valid response from the simulator for this boat key.
-				log.Println("No response for boat key: " + boatKey)
+				// There was no valid data from the simulator for this boat key.
+				log.Println("No data for boat key: " + boatKey)
 
 				// Close this connection.
 				for e := conns.Front(); e != nil; e = e.Next() {
@@ -319,8 +319,9 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 
 	responseReader := bufio.NewReader(conn)
 
-	// For each boat key currently tracked, get the boat data from the simulator.
+	// For each boat currently tracked, process its data from the simulator.
 	numTracked := len(_trackedBoats)
+	boatsToUntrack := list.New()
 	for i := 0; i < numTracked; i++ {
 		line, err := responseReader.ReadString('\n')
 
@@ -392,6 +393,7 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 
 		case "noboat":
 			log.Println("No boat for key: " + s[1])
+			boatsToUntrack.PushBack(s[1])
 
 		default:
 			log.Println("Unexpected response from simulator: " + s[2])
@@ -400,6 +402,11 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 
 	// Ensure that our request writer goroutine has finished before continuing.
 	<-requestWriterDone
+
+	for boat := boatsToUntrack.Front(); boat != nil; boat = boat.Next() {
+		log.Println("Untracking \"noboat\" " + boat.Value.(string))
+		delete(_trackedBoats, boat.Value.(string))
+	}
 
 	return resps
 }
@@ -505,7 +512,11 @@ func createBoatGroupRespMsg(connCtx *ConnCtx, resps map[string]BoatDataLiveRespM
 		otherBoatKey := e.Value.(*BoatInfo).BoatKey
 		friendlyName := e.Value.(*BoatInfo).FriendlyName
 
-		otherBoatData := resps[otherBoatKey]
+		otherBoatData, exists := resps[otherBoatKey]
+
+		if !exists {
+			continue // Data for other boat is missing.
+		}
 
 		if connCtx.BoatKey == otherBoatKey {
 			continue // Our boat, so don't include it here.
