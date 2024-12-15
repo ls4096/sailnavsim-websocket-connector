@@ -18,52 +18,43 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"github.com/gorilla/websocket"
 )
 
 func main() {
-	log.Println("SailNavSim WebSocket Connector v1.2.1")
+	log.Println("SailNavSim WebSocket Connector v1.3.0")
 
-	listenPort, connectPort, err := parseArgs(os.Args[1:])
+	listenHostPort, connectHostPort, err := parseArgs(os.Args[1:])
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	go boatDataLiveMain(connectPort)
+	go boatDataLiveMain(connectHostPort)
 
 	http.HandleFunc("/v1/ws", wsHandler)
 	http.HandleFunc("/v1/ws/", wsHandler)
 
-	log.Println("About to listen on localhost port " + strconv.Itoa(listenPort) + "...")
+	log.Println("About to listen on " + listenHostPort + "...")
 
-	err = http.ListenAndServe("127.0.0.1:" + strconv.Itoa(listenPort), nil)
+	err = http.ListenAndServe(listenHostPort, nil)
 	if err != nil {
 		log.Println(err)
 	}
 }
 
-func parseArgs(args []string) (int, int, error) {
+func parseArgs(args []string) (string, string, error) {
 	if len(args) != 2 {
-		return -1, -1, errors.New("ERROR: Program requires two arguments: listenPort, connectPort")
+		return "", "", errors.New("ERROR: Program requires two arguments: listenHostPort, connectHostPort")
 	}
 
-	listenPort, err := strconv.Atoi(args[0])
-	if err != nil {
-		return -1, -1, fmt.Errorf("Failed to parse listen port: %w", err)
-	}
+	listenHostPort := args[0]
+	connectHostPort := args[1]
 
-	connectPort, err := strconv.Atoi(args[1])
-	if err != nil {
-		return -1, -1, fmt.Errorf("Failed to parse connect port: %w", err)
-	}
-
-	return listenPort, connectPort, nil
+	return listenHostPort, connectHostPort, nil
 }
 
 type ReqMsg struct {

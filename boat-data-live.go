@@ -59,7 +59,7 @@ var _trackedBoats = make(map[string]*TrackedBoatEntry)
 var _countConns int64 = 0
 var _countMsgs int64 = 0
 
-var _connectPort int = 0
+var _connectHostPort string = ""
 
 var _boatKeyRegexp *regexp.Regexp = regexp.MustCompile("^[0-9a-f]{32}$")
 
@@ -147,8 +147,8 @@ type KeyConnTuple struct {
 	Conn *websocket.Conn
 }
 
-func boatDataLiveMain(connectPort int) {
-	_connectPort = connectPort
+func boatDataLiveMain(connectHostPort string) {
+	_connectHostPort = connectHostPort
 
 	var iterCount int64 = 0
 	var iterTimeMin int64 = 999999999999
@@ -296,7 +296,7 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 		return resps
 	}
 
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort), DIAL_TIMEOUT)
+	conn, err := net.DialTimeout("tcp", _connectHostPort, DIAL_TIMEOUT)
 	if err != nil {
 		log.Println(err)
 		return resps
@@ -412,7 +412,7 @@ func getBoatDataLiveResps() map[string]BoatDataLiveRespMsg {
 }
 
 func getBoatsInGroup(boatKey string) *list.List {
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:" + strconv.Itoa(_connectPort), DIAL_TIMEOUT)
+	conn, err := net.DialTimeout("tcp", _connectHostPort, DIAL_TIMEOUT)
 	if err != nil {
 		log.Println(err)
 		return nil
